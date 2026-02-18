@@ -1,3 +1,4 @@
+import java.math.BigDecimal;
 import java.sql.*;
 import java.util.Scanner;
 
@@ -13,8 +14,8 @@ public class BankService {
                 String name = rs.getString("name");
                 int accNo = rs.getInt("account_no");
                 String type = rs.getString("account_type");
-                double balance = rs.getDouble("balance");
-                System.out.println("Name: " + name + ", Account No: " + accNo + ", Account Type: " + type + ", Your Current Balance: " + balance);
+                BigDecimal balance = rs.getBigDecimal("balance");
+                System.out.println("Name: " + name + ", Account No: SBI-" + accNo + ", Account Type: " + type + ", Your Current Balance: " + balance);
             } else {
                 System.out.println("Account Not Found");
             }
@@ -26,35 +27,30 @@ public class BankService {
         }
     }
 
-    public void Deposite(int accountNo, double amount) {
+    public void Deposite(int accountNo, BigDecimal amount) {
         Connection conn = null;
         try {
             conn = DBConnection.getConnection();
             conn.setAutoCommit(false);
-            String findSql = "SELECT account_id FROM accounts WHERE account_no=?";
-            PreparedStatement findps = conn.prepareStatement(findSql);
-            findps.setInt(1, accountNo);
-            ResultSet findrs = findps.executeQuery();
-            int accountId;
-            if (findrs.next()) {
-                accountId = findrs.getInt("account_id");
-            } else {
+            //find account_id
+            int accountId=AccountId.getAccountId(conn,accountNo);
+            if(accountId==-1){
                 System.out.println("Account Not Found");
+                conn.rollback();
                 return;
             }
-
             //insert transaction into transaction table
             String insertSql = "INSERT INTO transactions (transaction_type, account_id, amount, transaction_date) VALUES (?, ?, ?, NOW())";
             PreparedStatement insertps = conn.prepareStatement(insertSql);
             insertps.setString(1, "DEPOSIT");
             insertps.setInt(2, accountId);
-            insertps.setDouble(3, amount);
+            insertps.setBigDecimal(3, amount);
             insertps.executeUpdate();
 
             //update balance
             String updateSql = "UPDATE accounts SET balance=balance+? WHERE account_id=?";
             PreparedStatement updateps = conn.prepareStatement(updateSql);
-            updateps.setDouble(1, amount);
+            updateps.setBigDecimal(1, amount);
             updateps.setInt(2, accountId);
             updateps.executeUpdate();
             conn.commit();
@@ -69,10 +65,10 @@ public class BankService {
                 String name = currentrs.getString("name");
                 String Type = currentrs.getString("account_type");
                 Double bal = currentrs.getDouble("balance");
-                System.out.println("Name: " + name + ", Account No: " + accountNo + ", Account_type: " + Type + ", Your Current Balance: " + bal);
+                System.out.println("Name: " + name + ", Account No: SBI-" + accountNo + ", Account_type: " + Type + ", Your Current Balance: " + bal);
             }
-            findrs.close();
-            findps.close();
+            insertps.close();
+            updateps.close();
             currentps.close();
             currentrs.close();
         } catch (Exception e) {
@@ -93,43 +89,54 @@ public class BankService {
 
     }
 
-    public void Withdraw(int accountNo, double amount) {
+    public void Withdraw(int accountNo, BigDecimal amount) {
         Connection conn = null;
         try {
             conn = DBConnection.getConnection();
             conn.setAutoCommit(false);
-
-            //find account id
-            String findSql = "SELECT account_id,balance FROM accounts WHERE account_no=?";
+            //find current balacne
+            String findSql = "SELECT balance FROM accounts WHERE account_no=?";
             PreparedStatement findps = conn.prepareStatement(findSql);
             findps.setInt(1, accountNo);
             ResultSet findrs = findps.executeQuery();
-            int accountId;
-            double curr_bal;
-            if (findrs.next()) {
-                accountId = findrs.getInt("account_id");
-                curr_bal = findrs.getDouble("balance");
-                if (curr_bal < amount) {
-                    System.out.println("Your Current Balance is Not Sufficient to withdraw and your current balance is: " + curr_bal);
-                    return;
-                }
-            } else {
-                System.out.println("Account Not Found");
+
+            if (!findrs.next()) {
+                System.out.println("Balance not found for this account");
+                findrs.close();
+                findps.close();
+                conn.rollback();
                 return;
             }
 
+            BigDecimal curr_bal = findrs.getBigDecimal("balance");
+            findrs.close();
+            findps.close();
+            if (curr_bal.compareTo(amount) < 0) {
+                System.out.println("Your Current Balance is Not Sufficient to withdraw and your current balance is: " + curr_bal);
+                findrs.close();
+                findps.close();
+                conn.rollback();
+                return;
+            }
+            //find account_id
+            int accountId=AccountId.getAccountId(conn,accountNo);
+            if(accountId==-1){
+                System.out.println("Account Not Found");
+                conn.rollback();
+                return;
+            }
             //insert into transaction table
             String insertSql = "INSERT INTO transactions (transaction_type, account_id, amount, transaction_date) VALUES (?, ?, ?, NOW())";
             PreparedStatement insertps = conn.prepareStatement(insertSql);
             insertps.setString(1, "WITHDRAW");
             insertps.setInt(2, accountId);
-            insertps.setDouble(3, amount);
+            insertps.setBigDecimal(3, amount);
             insertps.executeUpdate();
 
             //update the balance
             String updateSql = "UPDATE accounts SET balance=balance-? WHERE account_id=?";
             PreparedStatement updateps = conn.prepareStatement(updateSql);
-            updateps.setDouble(1, amount);
+            updateps.setBigDecimal(1, amount);
             updateps.setInt(2, accountId);
             updateps.executeUpdate();
             conn.commit();
@@ -144,12 +151,13 @@ public class BankService {
                 String name = currentrs.getString("name");
                 String type = currentrs.getString("account_type");
                 double bal = currentrs.getDouble("balance");
-                System.out.println("Name: " + name + ", Account No: " + accountNo + ", Account type: " + type + ", Your Current Balance: " + bal);
+                System.out.println("Name: " + name + ", Account No: SBI-" + accountNo + ", Account type: " + type + ", Your Current Balance: " + bal);
             } else {
                 System.out.println("Failed");
             }
             findrs.close();
             findps.close();
+            insertps.close();
             updateps.close();
             currentps.close();
             currentrs.close();
@@ -173,31 +181,26 @@ public class BankService {
     public void ShowTransaction(int accountNo) {
         try {
             Connection conn = DBConnection.getConnection();
-            String findSql = "SELECT account_id,balance FROM accounts WHERE account_no=?";
-            PreparedStatement findps = conn.prepareStatement(findSql);
-            findps.setInt(1, accountNo);
-            ResultSet findrs = findps.executeQuery();
-            int accountId;
-            double curr_bal;
-            if (findrs.next()) {
-                accountId = findrs.getInt("account_id");
-            } else {
+            //find account_id
+            int accountId=AccountId.getAccountId(conn,accountNo);
+            if(accountId==-1){
                 System.out.println("Account Not Found");
                 return;
             }
-
             //show
-            String showSql = "SELECT transaction_id,transaction_type,amount, transaction_date FROM transactions WHERE account_id=?";
+            String showSql = "SELECT transaction_id,transaction_type,amount, transaction_date FROM transactions WHERE account_id=? ORDER BY transaction_date DESC";
             PreparedStatement ps = conn.prepareStatement(showSql);
             ps.setInt(1, accountId);
             ResultSet rs = ps.executeQuery();
             while (rs.next()) {
                 int id = rs.getInt("transaction_id");
                 String type = rs.getString("transaction_type");
-                double amount = rs.getDouble("amount");
+                BigDecimal amount = rs.getBigDecimal("amount");
                 Timestamp date = rs.getTimestamp("transaction_date");
-                System.out.println("Transaction Id: " + id + ", Account No: " + accountNo + ", Transaction Type: " + type + ", Amount: " + amount + ", Date: " + date);
+                System.out.println("Transaction Id: " + id + ", Account No: SBI-" + accountNo + ", Transaction Type: " + type + ", Amount: " + amount + ", Date: " + date);
             }
+            rs.close();
+            ps.close();
             conn.close();
         } catch (Exception e) {
             e.printStackTrace();
@@ -252,14 +255,125 @@ public class BankService {
                 }
             }
     }
+    public void transfer(int fromAccNo, int toAccNo, BigDecimal amount) {
+        Connection conn = null;
+
+        try {
+            if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+                System.out.println("Invalid amount. Must be > 0");
+                return;
+            }
+            if (fromAccNo == toAccNo) {
+                System.out.println("From and To accounts cannot be same");
+                return;
+            }
+
+            conn = DBConnection.getConnection();
+            conn.setAutoCommit(false);
+
+            // 1) Debit (atomic)
+            String debitSql = """
+                UPDATE accounts
+                SET balance = balance - ?
+                WHERE account_no = ? AND balance >= ?
+                """;
+            try (PreparedStatement debitPs = conn.prepareStatement(debitSql)) {
+                debitPs.setBigDecimal(1, amount);
+                debitPs.setInt(2, fromAccNo);
+                debitPs.setBigDecimal(3, amount);
+
+                int debited = debitPs.executeUpdate();
+                if (debited == 0) {
+                    System.out.println("Insufficient balance or From-Account not found");
+                    conn.rollback();
+                    return;
+                }
+            }
+
+            // 2) Credit
+            String creditSql = """
+                UPDATE accounts
+                SET balance = balance + ?
+                WHERE account_no = ?
+                """;
+            try (PreparedStatement creditPs = conn.prepareStatement(creditSql)) {
+                creditPs.setBigDecimal(1, amount);
+                creditPs.setInt(2, toAccNo);
+
+                int credited = creditPs.executeUpdate();
+                if (credited == 0) {
+                    System.out.println("To-Account not found");
+                    conn.rollback();
+                    return;
+                }
+            }
+
+            // 3) Transaction logs (need account_id for both)
+            int fromId = AccountId.getAccountId(conn, fromAccNo);
+            int toId   = AccountId.getAccountId(conn, toAccNo);
+
+            if (fromId == -1 || toId == -1) {
+                System.out.println("Account mapping failed");
+                conn.rollback();
+                return;
+            }
+
+            String txnSql = """
+                INSERT INTO transactions (transaction_type, account_id, amount, transaction_date)
+                VALUES (?, ?, ?, NOW())
+                """;
+            try (PreparedStatement txnPs = conn.prepareStatement(txnSql)) {
+                // DEBIT record
+                txnPs.setString(1, "TRANSFER_DEBIT");
+                txnPs.setInt(2, fromId);
+                txnPs.setBigDecimal(3, amount);
+                txnPs.executeUpdate();
+
+                // CREDIT record
+                txnPs.setString(1, "TRANSFER_CREDIT");
+                txnPs.setInt(2, toId);
+                txnPs.setBigDecimal(3, amount);
+                txnPs.executeUpdate();
+            }
+
+            conn.commit();
+            System.out.println("Transfer successful " + amount + " from SBI-" + fromAccNo + " to SBI-" + toAccNo);
+            String currentSql = "SELECT c.name,a.account_no,a.account_type,a.balance FROM accounts a JOIN customers c ON c.customer_id=a.customer_id WHERE a.account_id=?";
+            PreparedStatement currentps = conn.prepareStatement(currentSql);
+            currentps.setInt(1, fromId);
+            ResultSet currentrs = currentps.executeQuery();
+            if (currentrs.next()) {
+                String name = currentrs.getString("name");
+                String type = currentrs.getString("account_type");
+                double bal = currentrs.getDouble("balance");
+                System.out.println("Name: " + name + ", Account No: SBI-" + fromId + ", Account type: " + type + ", Your Current Balance: " + bal);
+            } else {
+                System.out.println("Failed");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            try {
+                if (conn != null) conn.rollback();
+            } catch (SQLException ex) {
+                ex.printStackTrace();
+            }
+        } finally {
+            try {
+                if (conn != null) conn.close();
+            } catch (SQLException ex) {
+                ex.printStackTrace();
+            }
+        }
+    }
+
     public void menu(){
 
         int acc_no;
-        double amount;
+        BigDecimal amount;
         boolean flag=true;
+        Scanner scan=new Scanner(System.in);
         while(flag) {
-            System.out.println("1.Create Account \n2.Check Balance \n3.Deposite amount \n4.Withdraw amount \n5.Transaction History\n6.exit");
-            Scanner scan=new Scanner(System.in);
+            System.out.println("1.Create Account \n2.Check Balance \n3.Deposite amount \n4.Withdraw amount \n5.Transaction History\n6.Transfer money\n7.exit");
             int option = scan.nextInt();
             switch (option) {
                 case 1:
@@ -283,8 +397,8 @@ public class BankService {
                     System.out.println("Enter Your Account No(Recheck before enter): ");
                     acc_no = scan.nextInt();
                     System.out.println("Enter Amount(>0): ");
-                    amount = scan.nextDouble();
-                    if (amount > 0) {
+                    amount = scan.nextBigDecimal();
+                    if (amount.compareTo(BigDecimal.ZERO) > 0) {
                         Deposite(acc_no,amount);
                     } else {
                         System.out.println("Invalid amount. Please enter valid amount");
@@ -294,8 +408,8 @@ public class BankService {
                     System.out.println("Enter Your Account No(Recheck before enter): ");
                     acc_no = scan.nextInt();
                     System.out.println("Enter Amount(>0): ");
-                    amount = scan.nextDouble();
-                    if (amount > 0) {
+                    amount = scan.nextBigDecimal();
+                    if (amount.compareTo(BigDecimal.ZERO) > 0) {
                         Withdraw(acc_no,amount);
                     } else {
                         System.out.println("Invalid amount. Please enter valid amount");
@@ -307,6 +421,17 @@ public class BankService {
                     ShowTransaction(acc_no);
                     break;
                 case 6:
+                    System.out.println("Enter From Account No:");
+                    int fromAcc = scan.nextInt();
+                    System.out.println("Enter To Account No:");
+                    int toAcc = scan.nextInt();
+                    System.out.println("Enter Amount (>0):");
+                    BigDecimal amt = scan.nextBigDecimal();
+
+                    transfer(fromAcc, toAcc, amt);
+                    break;
+
+                case 7:
                     flag=false;
                     System.out.println("Thank You for using our bank");
                     break;
